@@ -1,0 +1,19 @@
+app:
+  name: Intelligent Recipe Recommendation System
+  version: 0.1.0
+
+backend:
+  host: 0.0.0.0
+  port: 8000
+  reload: true
+
+frontend:
+  port: 3000
+  api_base_url: http://localhost:8000
+
+recommendation:
+  top_n: 10                  # number of results to return
+  tfidf_max_features: 5000   # TF-IDF vocabulary size cap
+
+data:
+  recipes_csv: data/recipes.csv
