@@ -13,10 +13,15 @@ Recommends recipes based on ingredients you have using **TF-IDF vectorization** 
 │   ├── routers/
 │   │   └── recommend.py         # /api/recommend, /api/suggest-ingredients, /api/cuisines
 │   └── services/
-│       └── recommender.py       # TF-IDF engine + conditional probability
+│       └── recommender.py       # TF-IDF engine + conditional probability scorer
 ├── frontend/
+│   ├── index.html
+│   ├── vite.config.js
+│   ├── tailwind.config.js
 │   ├── package.json
 │   └── src/
+│       ├── main.jsx
+│       ├── index.css
 │       ├── App.jsx
 │       └── components/
 │           ├── SearchForm.jsx
@@ -26,12 +31,27 @@ Recommends recipes based on ingredients you have using **TF-IDF vectorization** 
 │   ├── recipes.csv              # 1 090 Allrecipes recipes (name, cook time, rating, image)
 │   ├── test_recipes.csv         # 59 recipes with structured ingredient objects
 │   ├── train.json               # 39 774 Kaggle "What's Cooking" recipes (cuisine + ingredients)
-│   └── test.json                # 9 944 Kaggle recipes (ingredients only)
+│   ├── test.json                # 9 944 Kaggle recipes (ingredients only)
+│   └── RAW_recipes.csv          # ⚠️ NOT in repo — download from Kaggle (see below)
 ├── config_files/
-│   └── config.yaml              # App-wide configuration
+│   └── config.yaml
 ├── venv/                        # Python virtual environment (not committed)
-└── requirements.txt             # Python dependencies
+├── requirements.txt             # Python dependencies
+└── README.md
 ```
+
+---
+
+## Large Dataset Setup ⚠️
+
+`RAW_recipes.csv` (280MB) is not committed to this repo due to GitHub's file size limit.
+
+**Download it from Kaggle:**
+1. Go to https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions
+2. Download the dataset and unzip it
+3. Copy `RAW_recipes.csv` into the `data/` folder
+
+The backend will work without it (falling back to the other datasets), but `RAW_recipes.csv` provides 231,000+ recipes with real calorie data and significantly improves recommendation quality.
 
 ---
 
@@ -43,32 +63,35 @@ git clone https://github.com/SamShtram/Cmpsc441_Intelligent_Recipe_Recommendatio
 cd Cmpsc441_Intelligent_Recipe_Recommendation_System
 ```
 
-### 2. Set up the Python virtual environment
+### 2. Set up Python virtual environment
 ```bash
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate      # Windows WSL / Linux / Mac
 pip install -r requirements.txt
 ```
 
-> **Every time you open a new terminal**, reactivate the venv first:
+> **Every time you open a new terminal**, reactivate first:
 > ```bash
 > source venv/bin/activate
 > ```
 
-### 3. Run the backend
+### 3. Add the large dataset (see above)
+Place `RAW_recipes.csv` in the `data/` folder.
+
+### 4. Run the backend
 ```bash
 cd backend
 uvicorn main:app --reload
 ```
 API runs at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
 
-### 4. Run the frontend (separate terminal)
+### 5. Run the frontend (separate terminal)
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-App runs at `http://localhost:3000`.
+App runs at `http://localhost:5173`.
 
 ---
 
@@ -85,6 +108,7 @@ App runs at `http://localhost:3000`.
 {
   "ingredients": ["chicken", "garlic", "onion"],
   "cuisine": "italian",
+  "max_calories": 800,
   "max_cook_time": 45
 }
 ```
@@ -102,10 +126,13 @@ The recommender automatically loads all dataset files found in `data/` and merge
 
 | File | Recipes | What it provides |
 |------|---------|-----------------|
+| `RAW_recipes.csv` | 231 637 | Names, real calories, cook times, tags — **download required** |
 | `recipes.csv` | 1 090 | Names, cook times, ratings, images, directions |
 | `test_recipes.csv` | 59 | Names, cook times, structured ingredients |
 | `train.json` | 39 774 | Cuisine labels + clean ingredient lists |
 | `test.json` | 9 944 | Ingredient lists only |
+
+**Total when all files present: 282,504 recipes, 20,350 unique ingredients.**
 
 The large JSON datasets primarily strengthen the co-occurrence matrix used for conditional probability scoring and ingredient suggestions.
 
@@ -113,22 +140,40 @@ The large JSON datasets primarily strengthen the co-occurrence matrix used for c
 
 ## How It Works
 
-1. **TF-IDF Vectorization** — Each recipe's ingredient list is converted to a TF-IDF vector. TF measures how often an ingredient appears in a specific recipe; IDF down-weights ingredients that appear across almost all recipes (e.g. salt, water).
+### 1. TF-IDF Vectorization
+Each recipe's ingredient list is converted to a TF-IDF vector:
+- **TF** — how often an ingredient appears in a specific recipe
+- **IDF** — down-weights common ingredients (salt, water) that appear across almost all recipes
 
-2. **Cosine Similarity** — The user's input ingredients are vectorized the same way, then compared against every recipe to produce a similarity score.
+The user's input ingredients are vectorized the same way, then compared against every recipe using **cosine similarity**.
 
-3. **Conditional Probability Boost** — An ingredient co-occurrence matrix is built from all 50 000+ recipes. For each recipe, we compute:
+### 2. Ingredient Co-occurrence Matrix
+Built from all 282k+ recipes:
+```
+co_occurrence[A][B] = number of recipes containing both A and B
+ingredient_counts[A] = number of recipes containing A
+```
 
-   > **P(B | A) = count(A and B) / count(A)**
+### 3. Conditional Probability
+For each pair of ingredients:
+```
+P(B | A) = count(A and B) / count(A)
+```
+Aggregated across the user's full ingredient set:
+```
+score(B) = Σ P(B | A)  for all A in user's ingredients
+```
+This powers both **ingredient suggestions** and a **recipe boost score**.
 
-   and aggregate across the user's full ingredient set:
+### 4. Combined Ranking
+```
+final_score = 0.7 × TF-IDF similarity + 0.3 × conditional probability boost
+```
+Both components are normalized to [0, 1] before combining. Results are then filtered by cuisine, max calories, and max cook time.
 
-   > **score(B) = Σ P(B | A) for all A in input**
+---
 
-   Recipes whose non-overlapping ingredients are strongly predicted by the user's inputs receive a higher boost.
-
-4. **Combined Score** — Final ranking uses a weighted combination:
-
-   > **score = 0.7 × TF-IDF similarity + 0.3 × conditional probability boost**
-
-5. **Ingredient Suggestions** — The same conditional probability aggregation is used to suggest complementary ingredients the user might want to add.
+## Notes
+- The `venv/` folder and `data/RAW_recipes.csv` are excluded from git via `.gitignore`
+- The backend auto-detects which dataset files are present in `data/` — no config changes needed
+- Calorie filtering only applies to recipes from `RAW_recipes.csv` (other datasets don't include nutrition data)
