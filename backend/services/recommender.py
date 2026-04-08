@@ -58,6 +58,15 @@ class RecipeRecommender:
                 else:
                     cook_time = None
                 ingredients = self._parse_python_list(r.get("ingredients", "[]"))
+                try:
+                    steps_list = ast.literal_eval(str(r.get("steps", "[]")))
+                    steps_str = "\n".join(
+                        f"{i+1}. {s.strip().capitalize()}"
+                        for i, s in enumerate(steps_list)
+                    )
+                except Exception:
+                    steps_str = None
+
                 rows.append({
                     "id":          id_counter,
                     "name":        r.get("name", "Unknown"),
@@ -67,7 +76,7 @@ class RecipeRecommender:
                     "calories":    calories,
                     "rating":      None,
                     "img_src":     None,
-                    "directions":  None,
+                    "directions":  steps_str,
                     "tags":        str(r.get("tags", "")),
                     "source":      "raw_recipes",
                 })
@@ -299,6 +308,37 @@ class RecipeRecommender:
         return np.array(boosts)
 
     # ------------------------------------------------------------------
+    # Coverage score
+    # ------------------------------------------------------------------
+
+    def _compute_coverage_scores(self, ingredients):
+        """
+        For each recipe, compute the fraction of the user's ingredients
+        that actually appear in the recipe.
+
+            coverage(recipe) = |user_ingredients ∩ recipe_ingredients|
+                               / |user_ingredients|
+
+        This ensures recipes that match MORE of the user's inputs rank higher,
+        preventing single-ingredient recipes from dominating results.
+        """
+        if self.df is None or self.df.empty:
+            return np.array([])
+
+        input_set = {i.strip().lower() for i in ingredients}
+        n = len(input_set)
+        if n == 0:
+            return np.zeros(len(self.df))
+
+        coverages = []
+        for _, row in self.df.iterrows():
+            recipe_ings = {i.strip().lower() for i in row["ingredients"].split(",") if i.strip()}
+            matched = len(input_set & recipe_ings)
+            coverages.append(matched / n)
+
+        return np.array(coverages)
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -308,15 +348,19 @@ class RecipeRecommender:
         max_cook_time=None,
         max_calories=None,
         cuisine=None,
-        top_n=10,
-        tfidf_weight=0.7,
-        cond_prob_weight=0.3,
+        top_n=50,
+        tfidf_weight=0.5,
+        cond_prob_weight=0.5,
+        coverage_weight=0.3,
         rich_only=False,
     ):
         """
-        Rank recipes using:
-          Final score = 0.7 * TF-IDF cosine similarity + 0.3 * conditional probability boost
-        Both normalised to [0,1] before combining.
+        Rank recipes using a three-component score:
+          final_score = 0.4 * TF-IDF + 0.3 * conditional_probability + 0.3 * coverage
+
+        Coverage rewards recipes that contain more of the user's actual ingredients,
+        preventing single-ingredient recipes from dominating multi-ingredient queries.
+        All three components are normalised to [0,1] before combining.
         """
         if self.df is None or self.df.empty or self.tfidf_matrix is None:
             return []
@@ -325,6 +369,7 @@ class RecipeRecommender:
         query_vec = self.vectorizer.transform([query])
         tfidf_scores = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
         cond_prob_scores = self._compute_cond_prob_recipe_boost(ingredients)
+        coverage_scores = self._compute_coverage_scores(ingredients)
 
         def normalize(arr):
             rng = arr.max() - arr.min()
@@ -333,11 +378,21 @@ class RecipeRecommender:
         tfidf_norm = normalize(tfidf_scores)
         cond_norm  = normalize(cond_prob_scores) if len(cond_prob_scores) > 0 \
                      else np.zeros_like(tfidf_norm)
-        combined = tfidf_weight * tfidf_norm + cond_prob_weight * cond_norm
+
+        # Coverage is used as a multiplier NOT an additive term.
+        # This means a recipe matching 1/3 ingredients can score at most 33%
+        # of its potential, forcing multi-ingredient overlap to rank higher.
+        # We soften with sqrt so partial matches are still surfaced.
+        coverage_raw = coverage_scores if len(coverage_scores) > 0 \
+                       else np.ones(len(tfidf_norm))
+        coverage_multiplier = np.sqrt(coverage_raw)  # sqrt softens penalty for partial matches
+
+        combined = (tfidf_weight * tfidf_norm + cond_prob_weight * cond_norm) * coverage_multiplier
 
         results = self.df.copy()
         results["tfidf_score"]     = np.round(tfidf_scores, 4)
         results["cond_prob_score"] = np.round(cond_prob_scores, 4)
+        results["coverage_score"]  = np.round(coverage_scores, 4)
         results["score"]           = np.round(combined, 4)
 
         if rich_only:
@@ -358,7 +413,7 @@ class RecipeRecommender:
         results = results.sort_values("score", ascending=False).head(top_n)
         records = results[[
             "id", "name", "cuisine", "ingredients", "calories", "cook_time",
-            "rating", "img_src", "score", "tfidf_score", "cond_prob_score", "source"
+            "rating", "img_src", "directions", "score", "tfidf_score", "cond_prob_score", "coverage_score", "source"
         ]].to_dict(orient="records")
         return self._clean_records(records)
         
