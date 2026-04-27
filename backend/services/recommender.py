@@ -144,7 +144,7 @@ class RecipeRecommender:
                 cuisine = r.get("cuisine", "unknown")
                 rows.append({
                     "id":          id_counter,
-                    "name":        f"Recipe #{r['id']} ({cuisine.replace('_', ' ').title()})",
+                    "name":        f"{cuisine.replace('_', ' ').title()} Dish with {', '.join(i.replace('-', ' ').title() for i in r['ingredients'][:3])}",
                     "cuisine":     cuisine,
                     "ingredients": ", ".join(r["ingredients"]),
                     "cook_time":   None,
@@ -169,7 +169,7 @@ class RecipeRecommender:
             for r in raw:
                 rows.append({
                     "id":          id_counter,
-                    "name":        f"Recipe #{r['id']}",
+                    "name":        f"Recipe with {', '.join(i.replace('-', ' ').title() for i in r['ingredients'][:3])}",
                     "cuisine":     "unknown",
                     "ingredients": ", ".join(r["ingredients"]),
                     "cook_time":   None,
