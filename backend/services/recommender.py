@@ -33,8 +33,6 @@ class RecipeRecommender:
                              minutes (cook time), nutrition [calories,...], tags
           recipes.csv      — 1 090 Allrecipes records: name, cook_time, rating, img_src
           test_recipes.csv — 59 records with structured ingredient JSON objects
-          train.json       — 39 774 Kaggle "What's Cooking": cuisine + ingredients
-          test.json        — 9 944 Kaggle records, ingredients only
 
         Unified schema:
           id, name, cuisine, ingredients (comma string), cook_time (int mins),
@@ -128,57 +126,6 @@ class RecipeRecommender:
                     "directions":  str(r.get("Directions", "")),
                     "tags":        "",
                     "source":      "test_recipes_csv",
-                })
-                id_counter += 1
-            frames.append(pd.DataFrame(rows))
-            print(f"  -> {len(rows)} recipes")
-
-        # --- train.json ---
-        train_json = DATA_DIR / "train.json"
-        if train_json.exists():
-            print(f"[INFO] Loading {train_json}")
-            with open(train_json) as f:
-                raw = json.load(f)
-            rows = []
-            for r in raw:
-                cuisine = r.get("cuisine", "unknown")
-                rows.append({
-                    "id":          id_counter,
-                    "name":        f"{cuisine.replace('_', ' ').title()} Dish with {', '.join(i.replace('-', ' ').title() for i in r['ingredients'][:3])}",
-                    "cuisine":     cuisine,
-                    "ingredients": ", ".join(r["ingredients"]),
-                    "cook_time":   None,
-                    "calories":    None,
-                    "rating":      None,
-                    "img_src":     None,
-                    "directions":  None,
-                    "tags":        cuisine,
-                    "source":      "train_json",
-                })
-                id_counter += 1
-            frames.append(pd.DataFrame(rows))
-            print(f"  -> {len(rows)} recipes")
-
-        # --- test.json ---
-        test_json = DATA_DIR / "test.json"
-        if test_json.exists():
-            print(f"[INFO] Loading {test_json}")
-            with open(test_json) as f:
-                raw = json.load(f)
-            rows = []
-            for r in raw:
-                rows.append({
-                    "id":          id_counter,
-                    "name":        f"Recipe with {', '.join(i.replace('-', ' ').title() for i in r['ingredients'][:3])}",
-                    "cuisine":     "unknown",
-                    "ingredients": ", ".join(r["ingredients"]),
-                    "cook_time":   None,
-                    "calories":    None,
-                    "rating":      None,
-                    "img_src":     None,
-                    "directions":  None,
-                    "tags":        "",
-                    "source":      "test_json",
                 })
                 id_counter += 1
             frames.append(pd.DataFrame(rows))
@@ -416,8 +363,6 @@ class RecipeRecommender:
             "rating", "img_src", "directions", "score", "tfidf_score", "cond_prob_score", "coverage_score", "source"
         ]].to_dict(orient="records")
         return self._clean_records(records)
-        
-    
 
     def _clean_records(self, records):
         """
